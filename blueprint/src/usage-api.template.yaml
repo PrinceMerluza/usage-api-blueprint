@@ -1,0 +1,73 @@
+Description: "Template for the Genesys Cloud API Usage Blueprint"
+Resources:
+  UsageApiSourceS3:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: "gc-usage-api-source"
+  UsageApiResultsS3:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: "gc-usage-api-results"
+  GenesysCloudManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties: 
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 
+              - "s3:GetObject"
+              - "s3:PutObject"
+            Resource: 
+              - !Join
+                - ''
+                - - !GetAtt UsageApiSourceS3.Arn
+                  - '/*'
+  GenesysCloudGlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: "Created for the Genesys Cloud API Usage Blueprint"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+        - !Ref GenesysCloudManagedPolicy
+  GenesysCloudDatabase:
+    Type: AWS::Glue::Database
+    Properties: 
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: genesysclouddb
+        Description: "Created for the Genesys Cloud API Usage Blueprint"
+  GenesysCloudCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: UsageApiCrawler
+      DatabaseName: !Ref GenesysCloudDatabase
+      Role: !GetAtt GenesysCloudGlueRole.Arn
+      Targets:
+        S3Targets:
+          - Path: !Join 
+            - ''
+            - - 's3://'
+              - !Ref UsageApiSourceS3
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties: 
+      Description: "Created for the Genesys Cloud API Usage Blueprint"
+      RecursiveDeleteOption: True
+      Name: UsageAPIWorkgroup
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Join 
+              - ''
+              - - 's3://'
+                - !Ref UsageApiResultsS3
