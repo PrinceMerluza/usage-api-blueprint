@@ -102,7 +102,7 @@ gc usage query -f query-file.json
 An alternative to having a file is building the JSON on-the-fly and piping it into gc. We've provided the following one-liner for this purpose where you can simply change the value of the jq arguments:
 
 ```bash
-echo {} | jq --arg interval "2021-01/2021-02" --arg granularity "Day" --argjson groupBy '["TemplateUri"]' --argjson metrics '["Status200"]' '.interval=$interval | if $ARGS.named.granularity != null then .granularity=$ARGS.named.granularity else . end | if $ARGS.named.groupBy != null then .groupBy=$ARGS.named.groupBy else . end | if $ARGS.named.metrics != null then .metrics=$ARGS.named.metrics else . end' | gc usage query
+echo {} | jq --arg interval "2021-01/2021-02" --arg granularity "Month" --argjson groupBy '["OAuthClientId"]' --argjson metrics '["Status200", "Status429"]' '.interval=$interval | if $ARGS.named.granularity != null then .granularity=$ARGS.named.granularity else . end | if $ARGS.named.groupBy != null then .groupBy=$ARGS.named.groupBy else . end | if $ARGS.named.metrics != null then .metrics=$ARGS.named.metrics else . end' | gc usage query
 ```
 
 :::primary
@@ -228,12 +228,46 @@ To deploy the template, complete the following:
 
 ### Upload transformed JSON to S3 bucket
 
-After the CloudFormation stack finishes its creation process, you can now upload the transformed JSON file that was created earlier. 
+If you have been following the same commands from the start, then you'll notice that we passed in a `granularity` value of `Month` for the usage query. Taking note of the value used is important, because you need to partition these files in the S3 buckets. The reason is that the properties of the query response have identical schema.
 
-If you have the AWS CLI configured and ready to use, you can simply call this command from your command line.
+Take the following example:
+
+```json
+{
+  "clientId":"xxxxxxxx-eb18-4804-9ec9-5673e2a4b5f4",
+  "clientName":"Prince Client Credentials",
+  ... Other properties redacted for conciseness ...
+  "status200":145,
+  "status300":0,
+  "status400":0,
+  "status500":0,
+  "status429":12,
+  "date":"2020-11-01T00:00:00Z"
+}
+```
+
+Without the context from the original request, there's no way to tell if the status data enumerated are from the entire month or only for that specific day.
+
+:::primary
+**Note**: When using `granularity = "Month"`, it will always showw the first day of the month in the date property.
+:::
+
+In order to partition our S3, all you need to do is create separate folders for them. An example structure would be like this, where JSON files will be uploaded according to the `granularity` property:
 
 ```bash
-aws s3 cp query-result.json s3://gc-usage-api-source
+s3://gc-usage-api-source/granularity=day/
+s3://gc-usage-api-source/granularity=week/
+s3://gc-usage-api-source/granularity=month/
+```
+
+:::primary
+**Note**: AWS Glue will produce a single table even if the files are in different folders. A new column `granularity` will be available which determines the granularity value of the partitioned entries.
+:::
+
+If you have the AWS CLI configured and ready to use, you can simply call this command from your command line (The folder will automatically be created):
+
+```bash
+aws s3 cp query-result.json s3://gc-usage-api-source/granularity=month/
 ```
 
 If you prefer to use the web AWS Console, you can follow these [instructions](https://docs.aws.amazon.com/quickstarts/latest/s3backup/step-2-upload-file.html) from the AWS documentation.
@@ -256,10 +290,10 @@ If the crawler state is `READY`, then it can be used with Athena for querying.
 
 ### Run an Amazon Athena Query
 
-Everything should now be set up for querying the data with Amazon Athena. In this example, we'll request the first 10 entries of the table:
+Everything should now be set up for querying the data with Amazon Athena. In this example, we'll get the top 10 Authorization Clients with the most `Status429` value.
 
 ```bash
-aws athena start-query-execution --query-string "SELECT * FROM "genesysclouddb"."gc_usage_api_source" limit 10;" --work-group "UsageAPIWorkgroup" --query-execution-context Database=genesyscloud,Catalog=AwsDataCatalog
+aws athena start-query-execution --query-string "SELECT * FROM "genesysclouddb"."gc_usage_api_source" WHERE granularity='month' ORDER BY status429 DESC limit 10" --work-group "UsageAPIWorkgroup" --query-execution-context Database=genesyscloud,Catalog=AwsDataCatalog
 ```
 
 By default, queries will be saved to the `gc-usage-api-results` bucket.
@@ -271,6 +305,3 @@ If everything's been setup sucessfully it'd be easy to integrate with other Amaz
 * [Understanding your Genesys Cloud API usage](https://developer.mypurecloud.com/blog/2021-01-04-API-Usage/)
 * [Rate Limits](https://developer.genesys.cloud/api/rest/rate_limits)
 * [Amazon Athena - Best Practices for Reading JSON Data](https://docs.aws.amazon.com/athena/latest/ug/parsing-JSON.html)
-
-
-
